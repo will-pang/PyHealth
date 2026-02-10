@@ -1,4 +1,6 @@
 import shutil
+import os
+
 def delete_cache(cache_directory):
     for item in os.listdir(cache_directory):
         item_path = os.path.join(cache_directory, item)
