@@ -1,0 +1,126 @@
+Full Pipeline: Raw File Path → Final Sample for MultimodalMortalityPredictionMIMIC4
+======================================================================================
+
+Stage 1: YAML Config defines the table schema
+----------------------------------------------
+pyhealth/datasets/configs/mimic4_note.yaml tells the system how to interpret each table:
+
+  discharge:
+    file_path: "note/discharge.csv.gz"
+    patient_id: "subject_id"
+    timestamp: "charttime"
+    attributes: ["note_id", "hadm_id", "note_type", "note_seq", "storetime", "text"]
+
+  radiology:
+    file_path: "note/radiology.csv.gz"
+    patient_id: "subject_id"
+    timestamp: "charttime"
+    attributes: ["note_id", "hadm_id", "note_type", "note_seq", "storetime", "text"]
+
+This maps raw columns → standardized fields (patient_id, timestamp, and named
+attributes like text and hadm_id).
+
+
+Stage 2: BaseDataset.load_table() reads & normalizes
+-----------------------------------------------------
+In pyhealth/datasets/base_dataset.py, each table is loaded into a Polars DataFrame.
+Columns are renamed with an event-type prefix:
+
+  text    → discharge/text
+  hadm_id → discharge/hadm_id
+
+All tables are concatenated into a single global event DataFrame with columns:
+
+  patient_id | event_type  | timestamp           | discharge/text      | discharge/hadm_id | ...
+  "101"      | "discharge" | 2020-01-15 10:30:00 | "Patient with..."   | "12345"           | ...
+  "101"      | "radiology" | 2020-01-15 08:00:00 | NULL                | NULL              | ...
+
+
+Stage 3: Patient object is created per patient
+-----------------------------------------------
+In pyhealth/data/data.py, a Patient is constructed from its slice of the global DataFrame:
+
+  patient = Patient(patient_id="101", data_source=patient_df)
+
+Internally, the data is partitioned by event_type for fast lookup. The key method
+is get_events():
+
+  patient.get_events(
+      event_type="discharge",
+      filters=[("hadm_id", "==", "12345")]
+  )
+
+This:
+  1. Grabs the pre-partitioned "discharge" rows
+  2. Applies the hadm_id filter (column discharge/hadm_id == "12345")
+  3. Returns a list of Event objects
+
+
+Stage 4: Event objects expose attributes via __getattr__
+---------------------------------------------------------
+Each Event (in data.py) stores an attr_dict stripped of the prefix:
+
+  event.text       → "Patient presented with chest pain..."
+  event.hadm_id    → "12345"
+  event.timestamp  → datetime(2020, 1, 15, 10, 30)
+
+
+Stage 5: MultimodalMortalityPredictionMIMIC4.__call__() transforms Patient → sample dict
+------------------------------------------------------------------------------------------
+The task's __call__ (lines 474-725 of mortality_prediction.py) iterates over
+admissions and:
+
+  1. Retrieves notes per admission via hadm_id filter (lines 614-621)
+  2. Extracts .text from each Event, skipping empty strings (lines 641-655)
+  3. Appends each note as a separate string to all_discharge_notes / all_radiology_notes
+  4. Validates that at least one note type exists (line 679)
+  5. Returns a single patient-level dict with "discharge": [str, ...] and "radiology": [str, ...]
+
+
+Stage 6: set_task() applies processors based on input_schema
+--------------------------------------------------------------
+In base_dataset.py, set_task() calls the task on every patient, then fits processors.
+The schema declares:
+
+  "discharge": "raw"
+  "radiology": "raw"
+
+The RawProcessor (pyhealth/processors/raw_processor.py) is a pass-through — it returns
+the list of strings unchanged. Compare with other fields:
+
+  Field          Schema Type              Processor                  What it does
+  -----------    ----------------------   -------------------------  ----------------------------------------
+  conditions     nested_sequence          NestedSequenceProcessor    Builds vocab, converts codes → int indices
+  drugs          nested_sequence          NestedSequenceProcessor    Same
+  discharge      raw                      RawProcessor               Pass-through — list of strings unchanged
+  radiology      raw                      RawProcessor               Pass-through — list of strings unchanged
+  image_path     text                     TextProcessor              Keeps as string
+  lab_values     nested_sequence_floats   NestedFloatsProcessor      Handles None-padded float vectors
+
+
+Stage 7: SampleDataset serves final samples
+---------------------------------------------
+The processed samples are stored in a SampleDataset (litdata StreamingDataset).
+When you index into it:
+
+  sample = sample_dataset[0]
+  sample["discharge"]  → ["Patient presented with...", "Follow-up note..."]
+  sample["radiology"]  → ["CXR shows consolidation in left lower lobe"]
+  sample["mortality"]  → 1
+
+The note text arrives as raw strings in a list, ready for downstream embedding
+(e.g., BioBERT, sentence transformers, etc.).
+
+
+Summary Flow
+-------------
+YAML config (defines table schema + file path)
+  → BaseDataset.load_table() (CSV → Polars DataFrame, prefixed columns)
+    → Global event DataFrame (all tables concatenated)
+      → Patient(data_source=patient_slice) (partitioned by event_type)
+        → patient.get_events("discharge", filters=[("hadm_id", "==", id)])
+          → List[Event] (each has .text, .hadm_id, .timestamp)
+            → Task.__call__() extracts note.text per admission, aggregates across visits
+              → Raw sample dict: {"discharge": ["text1", "text2", ...]}
+                → RawProcessor (pass-through, no transformation)
+                  → SampleDataset: list of strings ready for model consumption

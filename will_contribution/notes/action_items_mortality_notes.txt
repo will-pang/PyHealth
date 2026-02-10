@@ -1,0 +1,185 @@
+# Action Items: Mortality Prediction with Clinical Notes
+# PyHealth Task Implementation Guide
+
+================================================================================
+## Overview
+================================================================================
+
+Task: Mortality Prediction using clinical notes (discharge + radiology)
+Key Requirements:
+- Avoid temporal leakage (look-ahead for mortality expire flag)
+- Use hadm_id filtering first, then timestamp filtering
+- Handle missing timestamps as missing modality
+- Output: (List[str], List[time differences from first admission])
+
+================================================================================
+## Action Item 1: Create a New Task Class
+================================================================================
+
+Location: pyhealth/tasks/ (new file or add to mortality_prediction.py)
+Reference: pyhealth/tasks/mortality_prediction.py:270-726 (MultimodalMortalityPredictionMIMIC4)
+
+```python
+class NotesMortalityPredictionMIMIC4(BaseTask):
+    task_name = "notes_mortality_prediction_mimic4"
+    input_schema = {
+        "notes": "note_with_time",  # Custom processor (see Action Item 3)
+    }
+    output_schema = {
+        "label": "label",
+    }
+```
+
+================================================================================
+## Action Item 2: Implement Temporal Filtering Logic
+================================================================================
+
+Pattern from: pyhealth/tasks/mortality_prediction.py:44-52
+
+```python
+def __call__(self, patient) -> List[Dict]:
+    admissions = patient.get_events(event_type="admissions")
+    samples = []
+
+    for i, admission in enumerate(admissions):
+        # Step 1: hadm_id filtering (PREFERRED - more precise)
+        discharge_notes = patient.get_events(
+            event_type="discharge",
+            filters=[("hadm_id", "==", admission.hadm_id)]
+        )
+        radiology_notes = patient.get_events(
+            event_type="radiology",
+            filters=[("hadm_id", "==", admission.hadm_id)]
+        )
+
+        # Step 2: Optional timestamp filtering for edge cases
+        # Only include notes BEFORE discharge to avoid leakage
+        admission_dischtime = admission.dischtime
+        # Filter notes where charttime <= dischtime
+
+        # Step 3: Look-ahead for mortality label
+        # Check NEXT admission's expire flag (not current!)
+        if i + 1 < len(admissions):
+            next_admission = admissions[i + 1]
+            mortality_label = int(next_admission.hospital_expire_flag)
+        else:
+            continue  # Skip last visit (no next admission to predict)
+```
+
+Key leakage prevention:
+- Use hadm_id first (precise visit boundary)
+- Filter notes by timestamp if needed (charttime <= dischtime)
+- Predict mortality of NEXT admission, not current
+
+================================================================================
+## Action Item 3: Create Custom Processor for (List[str], List[float]) Output
+================================================================================
+
+Location: pyhealth/processors/ (new file)
+Reference: pyhealth/processors/nested_sequence_processor.py
+
+```python
+# pyhealth/processors/note_time_processor.py
+from typing import Any, Dict, List, Tuple
+from . import register_processor
+from .base_processor import FeatureProcessor
+
+@register_processor("note_with_time")
+class NoteWithTimeProcessor(FeatureProcessor):
+    """Processor for (List[str], List[float]) - notes with time offsets."""
+
+    def process(self, value: Tuple[List[str], List[float]]) -> Dict[str, Any]:
+        notes, time_diffs = value
+        return {
+            "texts": notes,  # List[str] - raw text
+            "time_offsets": time_diffs,  # List[float] as strings to avoid serialization issues
+        }
+```
+
+Why this matters: The raw processor can have issues with floats during task
+processing. Wrapping in a dict with explicit types avoids serialization errors.
+
+================================================================================
+## Action Item 4: Calculate Time Differences from First Admission
+================================================================================
+
+Pattern from: pyhealth/tasks/dka.py:580-587
+
+```python
+# Get first admission time as reference
+first_admission_time = admissions[0].timestamp
+
+# For each note, calculate time difference
+all_notes = []
+all_time_diffs = []
+
+for note in discharge_notes + radiology_notes:
+    note_time = note.charttime  # or appropriate timestamp field
+    if note_time is not None:
+        time_diff_hours = (note_time - first_admission_time).total_seconds() / 3600.0
+        all_notes.append(note.text)
+        all_time_diffs.append(time_diff_hours)
+    else:
+        # Handle missing timestamp - flag as missing modality
+        all_notes.append(note.text)
+        all_time_diffs.append(-1.0)  # Sentinel value for missing
+```
+
+================================================================================
+## Action Item 5: Handle Missing Timestamps as Missing Modality
+================================================================================
+
+```python
+# Option A: Skip notes without timestamps
+if note.charttime is None:
+    continue
+
+# Option B: Include with sentinel value (recommended)
+time_diff = -1.0 if note.charttime is None else calculate_diff(note.charttime)
+
+# Option C: Use admission time as fallback
+fallback_time = admission.timestamp
+time_diff = calculate_diff(note.charttime or fallback_time)
+```
+
+================================================================================
+## Action Item 6: Register the Processor
+================================================================================
+
+Location: pyhealth/processors/__init__.py
+
+```python
+from .note_time_processor import NoteWithTimeProcessor
+```
+
+================================================================================
+## File Structure Summary
+================================================================================
+
+| File                                          | Action                              |
+|-----------------------------------------------|-------------------------------------|
+| pyhealth/tasks/notes_mortality_prediction.py  | New task class                      |
+| pyhealth/processors/note_time_processor.py    | New processor for (text, time)      |
+| pyhealth/processors/__init__.py               | Register new processor              |
+
+================================================================================
+## Key References to Study
+================================================================================
+
+1. Temporal filtering pattern: pyhealth/tasks/mortality_prediction.py:398-425
+2. hadm_id filtering: pyhealth/tasks/mortality_prediction.py:44-52
+3. Note extraction: pyhealth/tasks/mortality_prediction.py:613-655
+4. Custom processor example: pyhealth/processors/nested_sequence_processor.py
+5. Multimodal demo: examples/mortality_prediction/multimodal_mimic4_demo.py
+
+================================================================================
+## Notes
+================================================================================
+
+- Timestamps are incomplete and a potential missing modality
+- Use hadm_id to first filter, then timestamp filtering to reduce errors
+- Clinical notes: discharge + radiology
+- Processors can be "raw" and represented as List[str]
+- May encounter data type errors in task processing with raw floats
+
+
