@@ -36,12 +36,10 @@ class EHRFoundationalModelMIMIC4(BaseTask):
         self.input_schema: Dict[str, str] = {
             "discharge": "raw",
             "radiology": "raw",
-            # "discharge_note_timestamps": "raw",
-            # "discharge_note_time_diffs": "raw",
-            # "radiology_note_timestamps": "raw",
-            # "radiology_note_time_diffs": "raw",
+            "discharge_note_time_diffs": "tensor",
+            "radiology_note_time_diffs": "tensor",
         }
-        self.output_schema: Dict[str, str] = {"mortality": "binary"}
+        self.output_schema: Dict[str, str] = {"mortality": "regression"}
 
     def _clean_text(self, text: Optional[str]) -> Optional[str]:
         """Return text if non-empty, otherwise None."""
@@ -130,7 +128,7 @@ class EHRFoundationalModelMIMIC4(BaseTask):
                     note_text = self._clean_text(note.text)
                     if note_text:
                         all_discharge_notes.append(note_text)
-                        all_discharge_notes_timestamps.append((note.timestamp, "discharge"))
+                        all_discharge_notes_timestamps.append(note.timestamp)
                 except AttributeError:
                     pass
 
@@ -139,30 +137,24 @@ class EHRFoundationalModelMIMIC4(BaseTask):
                     note_text = self._clean_text(note.text)
                     if note_text:
                         all_radiology_notes.append(note_text)
-                        all_radiology_notes_timestamps.append((note.timestamp, "radiology"))
+                        all_radiology_notes_timestamps.append(note.timestamp)
                 except AttributeError:
                     pass
 
         # Sort discharge_notes by timestamp 
-        all_discharge_notes_timestamps.sort(key=lambda x: x[0])
-        all_radiology_notes_timestamps.sort(key=lambda x: x[0])
+        all_discharge_notes_timestamps.sort()
+        all_radiology_notes_timestamps.sort()
 
         # Compute time difference for discharge notes (hours)
         discharge_note_time_diffs = [0.0] + [
-            (t2[0] - t1[0]).total_seconds() / 3600
-            for t1, t2 in zip(
-                all_discharge_notes_timestamps,
-                all_discharge_notes_timestamps[1:]
-            )
+            (curr - prev).total_seconds() / 3600
+            for prev, curr in zip(all_discharge_notes_timestamps, all_discharge_notes_timestamps[1:])
         ]
 
         # Compute time difference for radiology notes (hours)
         radiology_note_time_diffs = [0.0] + [
-            (t2[0] - t1[0]).total_seconds() / 3600
-            for t1, t2 in zip(
-                all_radiology_notes_timestamps,
-                all_radiology_notes_timestamps[1:]
-            )
+            (curr - prev).total_seconds() / 3600
+            for prev, curr in zip(all_radiology_notes_timestamps, all_radiology_notes_timestamps[1:])
         ]
 
         # ===== MODALITY REQUIREMENTS =====
@@ -179,13 +171,11 @@ class EHRFoundationalModelMIMIC4(BaseTask):
         return [
             {
                 "patient_id": patient.patient_id,
-                "discharge": all_discharge_notes,  # List of discharge notes
-                "discharge_note_timestamps": [str(t) for t in all_discharge_notes_timestamps],
-                "discharge_note_time_diffs": [str(t) for t in discharge_note_time_diffs],
-                "radiology": all_radiology_notes,  # List of radiology notes
-                "radiology_note_timestamps": [str(t) for t in all_radiology_notes_timestamps],  
-                "radiology_note_time_diffs": [str(t) for t in radiology_note_time_diffs],
-                "mortality": mortality_label
+                "discharge": all_discharge_notes,
+                "discharge_note_time_diffs": discharge_note_time_diffs,
+                "radiology": all_radiology_notes,
+                "radiology_note_time_diffs": radiology_note_time_diffs,
+                "mortality": mortality_label,
             }
         ]
 
@@ -198,7 +188,7 @@ if __name__ == "__main__":
         ehr_tables=["diagnoses_icd", "procedures_icd", "prescriptions", "labevents"],
         note_tables=["discharge", "radiology"],
         cache_dir=CACHE_DIR,
-        num_workers=16
+        num_workers=16,
     )
 
     task = EHRFoundationalModelMIMIC4()    
