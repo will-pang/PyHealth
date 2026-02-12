@@ -466,8 +466,8 @@ class BaseDataset(ABC):
             ) as cluster:
                 with DaskClient(cluster) as client:
                     if self.dev:
-                        logger.info("Dev mode enabled: limiting to 1000 patients")
-                        patients = df["patient_id"].unique().head(1000).tolist()
+                        logger.info("Dev mode enabled: limiting to 10000 patients")
+                        patients = df["patient_id"].unique().head(10000).tolist()
                         filter = df["patient_id"].isin(patients)
                         df = df[filter]
 
