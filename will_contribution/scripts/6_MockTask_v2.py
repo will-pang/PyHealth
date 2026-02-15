@@ -37,7 +37,7 @@ class EHRFoundationalModelMIMIC4(BaseTask):
             "discharge_note_times": "tuple_time_text",
             "radiology_note_times": "tuple_time_text",
         }
-        self.output_schema: Dict[str, str] = {"mortality": "regression"}
+        self.output_schema: Dict[str, str] = {"mortality": "binary"}
 
     def _clean_text(self, text: Optional[str]) -> Optional[str]:
         """Return text if non-empty, otherwise None."""
