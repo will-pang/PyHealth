@@ -169,8 +169,7 @@ if __name__ == "__main__":
         ehr_tables=["diagnoses_icd", "procedures_icd", "prescriptions", "labevents"],
         note_tables=["discharge", "radiology"],
         cache_dir=CACHE_DIR,
-        num_workers=8,
-        dev=True
+        num_workers=8
     )
 
     task = EHRFoundationalModelMIMIC4()    
