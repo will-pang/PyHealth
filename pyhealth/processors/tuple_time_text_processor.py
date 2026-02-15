@@ -9,9 +9,9 @@ Input/Output:
             - List[str]: Clinical text entries (e.g., discharge notes, progress notes)
             - List[float]: Time differences between entries (in any time unit)
     
-    Output: Tuple[List[str], torch.Tensor, str]
-            - List[str]: Same text entries (unmodified)
-            - torch.Tensor: 1D float tensor of time differences
+    Output: Tuple[bytes, torch.Tensor, str]
+            - bytes: Pickle-serialized list of text entries
+            - torch.Tensor: 1D float tensor of time differences [shape: (N,)]
             - str: Type tag for automatic modality routing (default: "note")
 
 Use Case:
@@ -39,8 +39,8 @@ Example:
     >>> time_diffs = [0.0, 2.5, 5.0]  # hours since admission
     >>> 
     >>> result = processor.process((texts, time_diffs))
-    >>> texts_out, time_tensor, tag = result
-    >>> print(f"Texts: {texts_out}")
+    >>> texts_bytes, time_tensor, tag = result
+    >>> print(f"Texts: {pickle.loads(texts_bytes)}")
     >>> print(f"Time tensor: {time_tensor}")
     >>> print(f"Type tag: {tag}")
     
@@ -51,6 +51,7 @@ Args:
 """
 
 from typing import Any, List, Tuple
+import pickle
 import torch
 from .base_processor import FeatureProcessor
 from . import register_processor
@@ -73,30 +74,27 @@ class TupleTimeTextProcessor(FeatureProcessor):
         super().__init__()
         self.type_tag = type_tag
 
-    def process(self, value: Tuple[List[str], List[float]]) -> Tuple[List[str], torch.Tensor, str]:
+    def process(self, value: Tuple[List[str], List[float]]) -> Tuple[bytes, Any, str]:
         """Process a tuple of texts and time differences.
-        
+
+        Pickle-serializes the text entries and converts time differences to a
+        tensor. Downstream code should use pickle.loads() on the first element
+        to recover the original list of strings.
+
         Args:
             value: Tuple containing:
                 - List[str]: Text entries (clinical notes, observations, etc.)
                 - List[float]: Time differences corresponding to each text entry
-        
+
         Returns:
             Tuple containing:
-                - List[str]: Original text entries (unmodified)
+                - bytes: Pickle-serialized text entries
                 - torch.Tensor: 1D float tensor of time differences [shape: (N,)]
                 - str: Type tag for modality routing
-                
-        Example:
-            >>> processor = TupleTimeTextProcessor(type_tag="clinical_note")
-            >>> texts = ["Note 1", "Note 2"]
-            >>> times = [0.0, 24.0]  # hours
-            >>> result = processor.process((texts, times))
-            >>> print(result[1])  # tensor([0., 24.])
         """
         texts, time_diffs = value
         time_tensor = torch.tensor(time_diffs, dtype=torch.float32)
-        return texts, time_tensor, self.type_tag
+        return pickle.dumps(texts), time_tensor, self.type_tag 
     
     def size(self):
         """Return the size of the processor vocabulary (not applicable for this processor)."""
