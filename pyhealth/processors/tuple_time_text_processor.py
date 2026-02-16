@@ -10,7 +10,7 @@ Input/Output:
             - List[float]: Time differences between entries (in any time unit)
 
     Output: Tuple[torch.Tensor, torch.Tensor, str]
-            - torch.Tensor: Token IDs from tokenizer [shape: (num_texts, max_seq_len)]
+            - torch.Tensor: Text Token IDs from tokenizer [shape: (num_texts, max_seq_len)]
             - torch.Tensor: 1D float tensor of time differences [shape: (N,)]
             - str: Type tag for automatic modality routing (default: "note")
 
@@ -40,7 +40,7 @@ Example:
     >>>
     >>> result = processor.process((texts, time_diffs))
     >>> token_ids, time_tensor, tag = result
-    >>> print(f"Token IDs shape: {token_ids['input_ids'].shape}")
+    >>> print(f"Text Token IDs shape: {token_ids.shape}")
     >>> print(f"Time tensor: {time_tensor}")
     >>> print(f"Type tag: {tag}")
 
@@ -92,14 +92,14 @@ class TupleTimeTextProcessor(FeatureProcessor):
 
         Returns:
             Tuple containing:
-                - torch.Tensor: Token IDs [shape: (num_texts, max_seq_len)]
+                - torch.Tensor: Text Token IDs [shape: (num_texts, max_seq_len)]
                 - torch.Tensor: 1D float tensor of time differences [shape: (N,)]
                 - str: Type tag for modality routing
         """
         texts, time_diffs = value
-        input_ids = self.tokenizer(texts, padding=True, truncation=True, return_tensors="pt")["input_ids"]
+        text_token_ids = self.tokenizer(texts, padding=True, truncation=True, return_tensors="pt")["input_ids"]
         time_tensor = torch.tensor(time_diffs, dtype=torch.float32)
-        return input_ids, time_tensor, self.type_tag
+        return text_token_ids, time_tensor, self.type_tag
 
     def size(self):
         """Return the vocabulary size of the tokenizer."""
