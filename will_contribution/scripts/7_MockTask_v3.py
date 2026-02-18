@@ -180,6 +180,7 @@ class EHRFoundationalModelMIMIC4(BaseTask):
             {
                 "patient_id": patient.patient_id,
                 "discharge_note_times": discharge_note_times,
+                "discharge_notes_timestamped": all_discharge_notes_timestamped,
                 "radiology_note_times": radiology_note_times,
                 "mortality": mortality_label,
             }
@@ -188,7 +189,7 @@ class EHRFoundationalModelMIMIC4(BaseTask):
 ### END OF CLASS
 
 if __name__ == "__main__":
-    delete_cache(CACHE_DIR)
+    # delete_cache(CACHE_DIR)
 
     dataset = MIMIC4Dataset(
         ehr_root=EHR_ROOT,
