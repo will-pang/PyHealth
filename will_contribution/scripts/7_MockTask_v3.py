@@ -124,7 +124,7 @@ class EHRFoundationalModelMIMIC4(BaseTask):
         if len(admissions_to_process) == 0:
             return []
 
-        # Get first admission time as reference for lab time calculations
+        # Get first admission time as reference for notes time offset
         first_admission_time = admissions_to_process[0].timestamp
 
         # Aggregated data across all admissions
@@ -202,10 +202,10 @@ if __name__ == "__main__":
     task = EHRFoundationalModelMIMIC4()    
 
     # Single patient
-    # patient = dataset.get_patient("10000032")                                                                           
-    # samples = task(patient)    
+    patient = dataset.get_patient("10000032")                                                                           
+    samples = task(patient)    
 
     # All patients
-    samples = dataset.set_task(task, cache_dir=f"{CACHE_DIR}/task", num_workers=8)
+    # samples = dataset.set_task(task, cache_dir=f"{CACHE_DIR}/task", num_workers=8)
 
     print("Done")
